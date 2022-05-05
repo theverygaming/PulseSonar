@@ -1,3 +1,4 @@
+from audioop import findfactor
 import matplotlib.pyplot as plt
 from scipy.fftpack import fft
 from scipy.io import wavfile
@@ -11,6 +12,7 @@ center_freq = 22000
 pulse_pause_s = 0.3 # time between pulses excluding the pulse itself
 speed_of_sound = 343.21 # speed of sound in m/s, may have to be adjusted for accurate distance values
 autodetect_peak = True # try to automatically detect pulse, without this set the input WAV will have to start with the first pulse and time drift will cause problems
+average = 10 # number of pulses to average
 
 def average_array(array):
     average = 0
@@ -25,6 +27,29 @@ def find_fft_peak(startindex, endindex, array):
             highestindex = i + startindex
     return highestindex
 
+class FFTaverager:
+    def __init__(self, fftlen, ffts):
+        self.avgarr = [ [0]*fftlen for i in range(ffts)]
+        self.ffts = ffts
+        self.fftlen = fftlen
+        self.avgcount = 0
+    
+    def add_avg(self, inarray):
+        for i in range(len(inarray)):
+            for j in range(self.fftlen):
+                self.avgarr[i][j] += inarray[i][j]
+        self.avgcount += 1
+
+    def get_result(self):
+        outarr = [ [0]*self.fftlen for i in range(self.ffts)]
+        for i in range(self.ffts):
+            for j in range(self.fftlen):
+                outarr[i][j] = self.avgarr[i][j] / self.avgcount
+        return outarr
+
+    def reset(self):
+        self.avgarr = [ [0]*self.fftlen for i in range(self.ffts)]
+        self.avgcount = 0
 
 sample_rate, samples = wavfile.read('sonar.wav')
 pulsesamples = int((pulse_pause_s) * sample_rate)
@@ -42,6 +67,8 @@ for i in range(int(len(samples) / fft_n)):
             fftresult2.append(np.abs(fftresult[j]))
     ffts.append(fftresult2)
 
+fftarr_length = len(ffts[0])
+
 range_arr = []
 for i in range(ffts_per_pulse):
     t = pulse_length_s * i * 2
@@ -50,14 +77,23 @@ for i in range(ffts_per_pulse):
         range_arr[i] = ""
 
 
+fftavg = FFTaverager(fftarr_length, ffts_per_pulse)
+
 fig, ax = plt.subplots(1,1)
+avgcounter = 0
 for i in range(int(len(samples) / pulsesamples)):
     realindex = i * pulsesamples
     fftindex = int(realindex / fft_n)
     if(autodetect_peak):
         fftindex = find_fft_peak(int(realindex / fft_n), int(realindex / fft_n) + ffts_per_pulse, ffts) - 1
-    plt.pcolor(ffts[fftindex:fftindex + ffts_per_pulse])
-    ax.set_yticks(range(ffts_per_pulse))
-    ax.set_yticklabels(range_arr)
-    plt.pause(pulse_pause_s + pulse_length_s)
+    fftavg.add_avg(ffts[fftindex:fftindex + ffts_per_pulse])
+    avgcounter += 1
+    if(avgcounter % average == 0):
+        plt.pcolor(fftavg.get_result())
+        ax.set_yticks(range(ffts_per_pulse))
+        ax.set_yticklabels(range_arr)
+        plt.pause(pulse_pause_s + pulse_length_s)
+        plt.pause(3)
+        avgcounter = 0
+        fftavg.reset()
 plt.show()
